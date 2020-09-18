@@ -1,0 +1,214 @@
+# Redux middleware
+
+## 지난시간 Recap
+
+index.js
+
+```jsx
+import { createStore } from './redux';
+
+function reducer(state = { counter: 0 }, action){
+	switch(action.type){
+		case 'inc':
+			return{
+				...state,
+				counter: state.counter + 1;
+			};
+	default:
+		return { ...state };
+	}
+}
+
+const store = createStore(reducer);
+
+store.subscribe(() => {
+	console.log(store.getState());
+})
+
+store.dispatch({
+	type: 'inc'
+});
+```
+
+- reducer는 순수함수여야 한다
+
+    = side effect가 없는 함수
+
+    = input이 같다면 output이 10억번을 호출해도 같은 함수
+
+dispatch
+
+```jsx
+store.dispatch({
+	type: 'inc'
+});
+
+store.dispatch({
+	type: 'inc'
+});
+```
+
+- reducer를 실행할 수 없으므로, dispatch라는 함수를 사용해서 (action을 넣어서) state를 변경시켜준다
+- dispatch가 여러개 동작할 경우 state는 동기적으로 수정되야 하므로, dispatch는 동기적으로 수행된다
+
+## 그렇다면, Reducer가 순수하지 않은 경우는?
+
+**순수하지 않은 상황에서의 작업이란?**
+
+- 결과가 매번 다르게 나오는 경우
+- 대표적으로 비동기 함수가 있다.(api를 다루는 경우)
+
+예시)
+
+```jsx
+import { createStore } from './redux';
+
+function api(url,callback){
+	setTimeout(() => {
+		callback({type: '응답!', data: []});
+	}, 2000);
+	return {};
+}
+
+function reducer(state = { counter: 0 }, action){
+	switch(action.type){
+		case 'inc':
+			return{
+				...state,
+				counter: state.counter + 1;
+			};
+		case 'fetch-user':
+			api('/api/v1/users/1',users => {
+				return {...state, users]
+			}
+	default:
+		return { ...state };
+	}
+}
+
+store.dispatch({
+	type: 'fetch-user'
+});
+```
+
+- 비동기로 작업되기 때문에, 리듀서에서 store로 리턴할 state가 없다.(콜백이 아직 안끝났으므로)
+- 따라서 비동기 작업은 상태의 업데이트엔 사용될 수 없다(reducer가 동기함수 이기 때문이다!)
+
+    → 이 문제를 해결하기 위해 미들웨어를 제공한다!
+
+## Redux-middleware
+
+- **side-effect는 reducer 바깥에서 처리해! 라는게 redux 미들웨어들의 개념이다!**
+- 지연호출의 개념(내가 딱 필요한 부분!!)
+
+미들웨어의 기본 구조
+
+```jsx
+// 인자 3개(여러개를) 함수 여러개로 쪼개는 기법 : 커링
+const myMiddleware = store => dispatch => action => {
+	dispatch(action);
+}
+
+// 위의 미들웨어 구조는 아래의 두 함수들과 같다.
+function yourMiddleware(store) {
+	return function(dispatch){
+		return function(action){
+			dispatch(action);
+		}
+	}
+}
+
+function ourMiddleware(store, dispatch, action) {
+	dirpatch(action);
+}
+
+myMiddleware(store)(store.dispatch)({type: 'inc'});
+ourMiddleware(store,store.dispatch,{type: 'inc});
+```
+
+- `myMiddleware` 와 `ourMiddleware` 는 실행결과는 같다! 무슨 차이가 있기에 이렇게 쓰는걸까..?
+
+ * 어떤 `action` 이 들어왔는지 로그를 찍고 싶을 때?
+
+- dispatch 직전에 로그를 찍으면 된다!
+
+**redux middleware 공식문서 읽는 TIME!**
+
+[미들웨어 | Redux](https://ko.redux.js.org/advanced/middleware#understanding-middleware)
+
+리듀서가 순차적으로 생겨먹은 놈이라서,
+
+순차적인 행동만 할 수 있으므로 외부에서 비동기 작업을 처리하기 위해 미들웨어를 쓰는 것!
+
+(아이패드로 설명하는 부분)
+
+흘러가는 data흐름사이에 넣으므로 middleware!
+
+redux에서는 action이 흐른다. action 객체가 들어가서(reducer) 결과로 state가 변경된다.
+
+기존의 흐름(reducer)에 middleware를 꽂아넣어 side effect를 준다!
+
+middleware는 꽂힌 순서대로 흐른다.(항상 data가 순서대로 흐른다.)
+
+(다시 돌아와서)
+
+```jsx
+const add1 = function(a,b){
+	return a + b;
+}
+
+const add2 = function(a) {
+	return function(b){
+		return a + b;
+	}
+}
+
+add1(10, 20);
+add2(10)(20);
+```
+
+- add1은 최종 결과가 나오는 중간에 사용자가 개입할 여지가 없다
+- 하지만 add2는 `add2(10)` 와 `(20)` 사이에 사용자가 개입할 여지가 있다! (공식문서의 표현으로 사용자의 입장에서 몽키패칭을 할 수 있는 구조임, 지연평가를 낼 수 있다.)
+
+따라서 `curing` 이란, 사용자가 중간에 개입할 여지를 줄 수 있는 구조로 만드는 것을 의미한다!
+
+### 아래 코드 5줄 여러번 반복해서 이해해보기(리덕스 미들웨어 만들기)
+
+```jsx
+middlewares = Array.from(middlewares).reverse();
+let lastDispatch = store.dispatch;
+
+middlewares.forEach((middleware) => {
+	lastDispatch = middleware(store)(lastDispatch);
+});
+
+return { ...store, dispatch: lastDispatch}
+```
+
+- 왜 middleware를 reverse() 할까?
+
+```jsx
+const logger = (store) => (next) => (action) => {
+	console.log("logger: ", action.type);
+	if(action.type === 'get user info'){
+		api.call('/fadaf').then((res) => {
+			next({
+				type: 'res user info',
+				data: res
+			});
+		});
+
+	} else{
+		next(action);
+	}
+	next(action);
+}
+// next를 호출하면 다음 next에게 action을 전달한다.
+
+const monitor = {}
+
+미들웨어를 여러개 적어주고,
+const store = createStore(reducer, [logger, monitor]);
+```
+
+- `if(action.type === 'get user info')` 이쪽 코드에서, 미들웨어 덕분에 api가 온다고해서 비동기에 action이 먹히는 것이 아니라, 비동기로 api를 받아온 후 action을 dispatch 하므로, reducer 입장에서는 그저 하나의 action이 들어온 것처럼 보인다!
